@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+plugin_root="$(cd "$(dirname "$0")/.." && pwd)"
+if command -v node >/dev/null 2>&1; then
+  node_binary="$(command -v node)"
+elif [[ -x /opt/homebrew/bin/node ]]; then
+  node_binary=/opt/homebrew/bin/node
+else
+  node_binary=""
+  for candidate in "$HOME"/.nvm/versions/node/*/bin/node; do
+    [[ -x "$candidate" ]] && node_binary="$candidate"
+  done
+fi
+if [[ -z "$node_binary" ]]; then
+  echo 'convertHEIC requires Node.js 20 or newer.' >&2
+  exit 1
+fi
+if [[ "${1:-}" == --convert ]]; then
+  shift
+  exec "$node_binary" "$plugin_root/src/convert-cli.mjs" "$@"
+fi
+exec "$node_binary" "$plugin_root/src/server.mjs" "$@"

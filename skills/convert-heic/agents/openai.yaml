@@ -1,0 +1,4 @@
+interface:
+  display_name: "convertHEIC"
+  short_description: "Open a drop zone for HEIC photos"
+  default_prompt: "Use $convert-heic to open the HEIC Drop Zone immediately and add converted JPEGs to my unsent message."

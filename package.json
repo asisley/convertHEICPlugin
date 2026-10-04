@@ -1,0 +1,13 @@
+{
+  "name": "convert-heic-plugin",
+  "version": "1.0.2",
+  "private": true,
+  "description": "Local HEIC conversion and draft JPEG attachments for Codex",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test tests/integration.test.mjs",
+    "test:ui": "node tests/ui-smoke.mjs",
+    "build:mac": "bash native/build.sh"
+  },
+  "devDependencies": { "playwright": "1.62.1" }
+}

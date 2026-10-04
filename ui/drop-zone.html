@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>convertHEIC · HEIC Drop Zone</title>
+<style>
+:root{color-scheme:light dark;--bg:#f7f8fa;--card:#fff;--text:#1c252f;--muted:#687783;--line:#dce3e9;--accent:#176953;--tint:#eef7f2;--error:#b52626}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:24px}main{max-width:680px;margin:auto}.brand{display:flex;gap:12px;align-items:center}.logo{width:40px;height:40px;border-radius:12px;background:var(--accent);color:white;display:grid;place-items:center;font-size:23px}h1{font-size:21px;letter-spacing:-.6px;margin:0}p{margin:4px 0 0;color:var(--muted)}.badge{margin-left:auto;color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:700}.drop{margin-top:24px;border:2px dashed var(--line);border-radius:18px;background:var(--card);padding:34px 18px;text-align:center;transition:.15s}.drop.over{border-color:var(--accent);background:var(--tint)}.drop h2{font-size:20px;margin:0 0 4px}.drop p{margin-bottom:20px}button{font:inherit;font-weight:600;border-radius:9px;padding:10px 16px;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--text)}button.primary{color:#fff;background:var(--accent);border-color:var(--accent)}button:disabled{opacity:.5;cursor:default}button:focus-visible,textarea:focus-visible{outline:3px solid #79bca7;outline-offset:3px}label{display:block}textarea{width:100%;resize:vertical;min-height:84px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);font:inherit;padding:12px;margin-top:6px}.request{margin-top:22px;font-weight:600}.request span{color:var(--muted);font-size:12px;font-weight:400}.auto{display:flex;align-items:center;gap:8px;margin:14px 0;color:var(--muted)}.auto input{accent-color:var(--accent);width:16px;height:16px}.status{min-height:24px;color:var(--accent);margin:14px 0;overflow-wrap:anywhere}.status.error{color:var(--error)}.results{display:grid;gap:10px}.result{display:flex;align-items:center;gap:12px;padding:10px;border:1px solid var(--line);background:var(--card);border-radius:12px}.result img{width:60px;height:60px;object-fit:cover;border-radius:7px}.result div{min-width:0}.result strong{display:block;overflow-wrap:anywhere}.result small{color:var(--muted)}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}footer{border-top:1px solid var(--line);margin-top:24px;padding-top:14px;font-size:12px;color:var(--muted)}[hidden]{display:none!important}
+@media(prefers-color-scheme:dark){:root{--bg:#161a1d;--card:#20262b;--text:#edf2f5;--muted:#a4b0b9;--line:#3a454d;--accent:#21846a;--tint:#203d33;--error:#ff9a9a}.badge{color:#83d5b6}}
+@media(max-width:390px){body{padding:16px}.badge{display:none}}
+</style></head><body><main>
+<header class="brand"><div class="logo" aria-hidden="true">⇄</div><div><h1>convertHEIC</h1><p>iPhone photos, ready for Codex.</p></div><span class="badge">Local conversion</span></header>
+<section class="drop" id="drop" aria-label="HEIC photo drop area"><h2>Drop HEIC photos here</h2><p>JPEGs go straight into your chat bar. You choose when to send.</p><button class="primary" id="choose" disabled>Choose photos</button><input type="file" id="files" accept=".heic,.heif,image/heic,image/heif" multiple hidden><p style="font-size:12px;margin:15px 0 0">Up to 4 photos · 64 MB each · Originals stay unchanged</p></section>
+<div id="status" class="status" role="status" aria-live="polite">Connecting to Codex…</div>
+<div class="results" id="results"></div>
+<div class="actions"><button id="attach" class="primary" hidden>Add JPEGs to chat</button><button id="cancel" hidden>Cancel</button><button id="native" disabled>Open Mac drop window</button></div>
+<footer>Drop into this panel, rather than the chat’s attachment box. Conversion runs on your Mac. JPEGs are attached to your draft without sending a message. Full resolution copies are saved in Pictures/convertHEIC.</footer>
+</main><script>
+const $ = id => document.getElementById(id);
+let nextId = 1, ready = false, busy = false, cancelled = false, activeUpload, activeSession;
+let results = [], legacy = false, canAttach = false, draftContent = [], contextRevision = 0;
+const pending = new Map();
+function status(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
+function rpc(method, params, timeout = 120000) {
+  const id = nextId++;
+  return new Promise((resolve,reject) => {
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error('Codex did not respond. Your originals are unchanged.')); }, timeout);
+    pending.set(id, {resolve,reject,timer});
+    window.parent.postMessage({jsonrpc:'2.0',id,method,params}, '*');
+  });
+}
+function hostContext(context) {
+  if (context?.theme) document.documentElement.style.colorScheme = context.theme;
+  if (context && Object.hasOwn(context, 'openai/modelContext')) {
+    draftContent = context['openai/modelContext']?.content || [];
+    contextRevision++;
+  }
+}
+window.addEventListener('message', event => {
+  if (event.source !== window.parent || event.data?.jsonrpc !== '2.0') return;
+  const m = event.data;
+  if (pending.has(m.id)) {
+    const p = pending.get(m.id); pending.delete(m.id); clearTimeout(p.timer);
+    if (m.error) p.reject(new Error(m.error.message || 'Codex rejected this request.')); else p.resolve(m.result);
+  }
+  if (m.method === 'ui/notifications/host-context-changed') hostContext(m.params);
+});
+async function call(name,args) {
+  const result = legacy ? await window.openai.callTool(name,args) : await rpc('tools/call',{name,arguments:args});
+  if (result?.isError) throw new Error(result.content?.find(c=>c.type==='text')?.text || 'Conversion failed.');
+  return result;
+}
+function setBusy(value) {
+  busy = value; $('choose').disabled = !ready || value; $('native').disabled = !ready || value;
+  $('cancel').hidden = !value; $('attach').disabled = value;
+}
+function base64(bytes) { let str = ''; for (let i=0;i<bytes.length;i+=8192) str += String.fromCharCode(...bytes.subarray(i,i+8192)); return btoa(str); }
+function jpegName(r) { return r.file.originalName.replace(/\.(heic|heif)$/i,'.jpg'); }
+function render() {
+  $('results').replaceChildren();
+  for (const r of results) {
+    const row=document.createElement('div');row.className='result';
+    const img=document.createElement('img');img.src='data:image/jpeg;base64,'+r.image.data;img.alt=jpegName(r);
+    const div=document.createElement('div'), strong=document.createElement('strong'), small=document.createElement('small');
+    strong.textContent=jpegName(r);
+    small.textContent=`${r.file.width} × ${r.file.height} · ${r.attached?'Added to chat':'JPEG ready'}`;
+    div.append(strong,small);row.append(img,div);$('results').append(row);
+  }
+  $('attach').hidden = !results.some(r=>!r.attached);
+}
+function convertedResults(converted) {
+  const images=converted.content?.filter(c=>c.type==='image'&&c.mimeType==='image/jpeg') || [];
+  const files=converted.structuredContent?.files || [];
+  if(!images.length || files.length!==images.length) throw new Error('No JPEG returned by the converter.');
+  return files.map((file,index)=>({file,image:images[index],attached:false}));
+}
+async function attach() {
+  if(!results.length) return;
+  if(!canAttach) throw new Error('This Codex host cannot add draft attachments. Your JPEGs are saved in Pictures/convertHEIC.');
+  const content=[...draftContent];
+  for(const r of results) {
+    if(!r.attached && !content.some(c=>c.type==='image'&&c.data===r.image.data)) {
+      content.push({...r.image,_meta:{'openai/title':jpegName(r)}});
+    }
+  }
+  if(content.filter(c=>c.type==='image').length>4) throw new Error('Add up to four photos to your message. Send or remove the current photos before adding more.');
+  const revision=contextRevision;
+  // Stages removable composer attachments. Never sends a message or starts a model turn.
+  await rpc('ui/update-model-context',{content});
+  if(contextRevision===revision) draftContent=content;
+  for(const r of results) r.attached=true;
+  render();status('JPEGs added to your chat bar. Type your message and press Send when ready.');
+}
+async function receive(files) {
+  if (!ready || busy) return;
+  if (!files.length || files.length>4 || files.length+draftContent.filter(c=>c.type==='image').length>4) {
+    status('Add up to four photos to your message. Send or remove the current photos before adding more.',true);return;
+  }
+  if (files.some(f=> !/\.(heic|heif)$/i.test(f.name) || f.size===0 || f.size>64*1024*1024)) {status('Choose HEIC or HEIF photos, each no larger than 64 MB.',true);return;}
+  setBusy(true);cancelled=false;results=[];render();
+  const failures=[];
+  try {
+    for (const [index,file] of files.entries()) {
+      if(cancelled) break;
+      try {
+        status(`Preparing ${index+1} of ${files.length}: ${file.name}`);
+        const start=await call('begin_upload',{name:file.name,size:file.size});activeUpload=start.structuredContent.upload_id;
+        for(let offset=0;offset<file.size;offset+=256*1024) {
+          if(cancelled) break;
+          const chunk=new Uint8Array(await file.slice(offset,offset+256*1024).arrayBuffer());
+          await call('append_upload',{upload_id:activeUpload,offset,data:base64(chunk)});
+        }
+        if(cancelled) {await call('cancel_upload',{upload_id:activeUpload});activeUpload=null;break;}
+        status(`Converting ${file.name} on your Mac…`);
+        const converted=await call('finish_upload',{upload_id:activeUpload});activeUpload=null;
+        results.push(...convertedResults(converted));render();
+      } catch(e) {
+        failures.push(`${file.name}: ${e.message}`);
+        if(activeUpload) await call('cancel_upload',{upload_id:activeUpload}).catch(()=>{});
+        activeUpload=null;
+      }
+    }
+    if(cancelled) status('Cancelled. Any completed JPEGs are still available.');
+    else if(results.length) {
+      try { await attach(); } catch(e) { failures.push(e.message); }
+    }
+    if(failures.length) status(failures.join('\n'),true);
+  } finally {setBusy(false);$('files').value='';}
+}
+$('choose').onclick=()=>$('files').click();$('files').onchange=()=>receive([...$('files').files]);
+$('drop').ondragover=e=>{e.preventDefault();if(!busy)$('drop').classList.add('over');};
+$('drop').ondragleave=()=>$('drop').classList.remove('over');
+$('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('over');receive([...e.dataTransfer.files]);};
+document.addEventListener('dragover',e=>e.preventDefault());document.addEventListener('drop',e=>e.preventDefault());
+$('cancel').onclick=async()=>{
+  cancelled=true;status('Cancelling…');
+  if(activeSession) await call('cancel_drop',{session_id:activeSession}).catch(()=>{});
+};
+$('attach').onclick=async()=>{setBusy(true);try{await attach();}catch(e){status(e.message,true);}finally{setBusy(false);}};
+$('native').onclick=async()=>{
+  if(busy) return;
+  setBusy(true);cancelled=false;results=[];render();
+  try {
+    const opened=await call('open_mac_drop_window',{});activeSession=opened.structuredContent.session_id;
+    status('Drop your photos into the Mac window. JPEGs will be added to your chat bar.');
+    while(!cancelled) {
+      const converted=await call('wait_for_drop',{session_id:activeSession,wait_seconds:30});
+      if(cancelled) break;
+      const state=converted.structuredContent?.status;
+      if(state==='waiting') continue;
+      if(state==='converted') {results=convertedResults(converted);render();await attach();}
+      else status(state==='cancelled'?'Cancelled. No message was sent.':'The drop session ended. Open it again to choose photos.',state!=='cancelled');
+      break;
+    }
+    if(cancelled) status('Cancelled. No message was sent.');
+  }catch(e){status(e.message,true);}
+  finally {
+    if(activeSession) await call('cancel_drop',{session_id:activeSession}).catch(()=>{});
+    activeSession=null;setBusy(false);
+  }
+};
+(async()=>{
+  try {
+    if(window.parent===window) throw new Error('Open this panel through the convertHEIC plugin in Codex.');
+    const init=await rpc('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'convertHEIC',version:'1.0.2'},appCapabilities:{}},12000);
+    window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}},'*');
+    canAttach=!!init.hostCapabilities?.updateModelContext?.image;
+    hostContext(init.hostContext);ready=true;
+  }catch(e){
+    if(window.openai?.callTool){legacy=true;ready=true;}
+    else{status('Open this panel through the convertHEIC plugin in Codex.',true);return;}
+  }
+  status(canAttach?'Ready for your HEIC photos.':'Ready to convert. This host does not support adding draft images.',!canAttach);setBusy(false);
+})();
+</script></body></html>

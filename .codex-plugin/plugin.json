@@ -1,0 +1,24 @@
+{
+  "name": "convert-heic",
+  "version": "1.0.2",
+  "description": "Open a HEIC drop zone and add converted JPEGs to the unsent chat message.",
+  "author": {
+    "name": "Austin Sisley"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "convertHEIC",
+    "shortDescription": "Open a drop zone for HEIC photos",
+    "longDescription": "Local HEIC and HEIF conversion using the Wilson Weightlifting CLI. Open the drop zone, add your photos, and the JPEGs appear as draft attachments in the chat bar. Type your request and press Send when ready. Originals stay unchanged. The plugin never sends a prompt automatically and does not change the normal composer upload handler.",
+    "developerName": "Austin Sisley",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Open the HEIC Drop Zone and add converted JPEGs to my unsent message."
+    ]
+  }
+}
